@@ -40,12 +40,11 @@ def checkMavenUrl(urlString) {
 }
 
 def mavenUrls = [
-        "https://nexus.webeyemobi.com/repository/maven-public/",
         "https://android-sdk.is.com/",
         "https://artifact.bytedance.com/repository/pangle",
-        "https://sdk.tapjoy.com",
+        "https://artifacts.applovin.com/android",
+        "https://artifactory.verizonmedia.com/artifactory/maven",
         "https://dl-maven-android.mintegral.com/repository/mbridge_android_sdk_oversea",
-        "https://s3.amazonaws.com/smaato-sdk-releases/",
         "https://cboost.jfrog.io/artifactory/chartboost-ads/",
         "https://cboost.jfrog.io/artifactory/chartboost-mediation",
         "https://jfrog.anythinktech.com/artifactory/overseas_sdk"
