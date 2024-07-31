@@ -286,6 +286,15 @@ def getApplicationId(flavor) {
     return productFlavor.applicationId
 }
 
+def addToOutDirList(List assetsOutDirList, outAssetsDir) {
+    if (assetsOutDirList != null && outAssetsDir != null) {
+        def finalAssetsDir = new File(project.getBuildDir(), outAssetsDir)
+        if (finalAssetsDir.exists()) {
+            assetsOutDirList.add(finalAssetsDir)
+        }
+    }
+}
+
 /**
  * 获取assets输出目录
  * @param flavor
@@ -295,26 +304,21 @@ def getAssetsOutDir(flavor) {
     def productFlavor = toUpperCaseFirstOne(flavor)
     def flavorNoSlash = productFlavor == null ? "" : productFlavor
     def assetsOutDirList = []
-    def finalAssetsDir = null
-    def outAssetsDir = String.format("intermediates/assets/%s/release", flavorNoSlash)
-    assetsOutDirList.add(new File(project.getBuildDir(), outAssetsDir))
-    outAssetsDir = String.format("intermediates/merged_assets/%srelease/merge%sReleaseAssets/out", flavorNoSlash, flavorNoSlash)
-    assetsOutDirList.add(new File(project.getBuildDir(), outAssetsDir))
-    outAssetsDir = String.format("intermediates/merged_assets/%srelease/out", flavorNoSlash, flavorNoSlash)
-    assetsOutDirList.add(new File(project.getBuildDir(), outAssetsDir))
+    def outAssetsDir = null
+    // 增加所有可能的Assets目录
+    outAssetsDir = String.format("intermediates/assets/%s/release", flavorNoSlash)
+    addToOutDirList(assetsOutDirList, outAssetsDir)
 
-    for (dir in assetsOutDirList) {
-        if (dir.exists()) {
-            finalAssetsDir = dir
-            break;
-        } else {
-            println "[WARNING...] Dir is not exists : [" + dir + "]"
-        }
-    }
-    if (finalAssetsDir != null) {
-        System.out.println "[VERBOSE...] Dir is exists : [" + finalAssetsDir + "]"
-    }
-    return finalAssetsDir
+    outAssetsDir = String.format("intermediates/merged_assets/%srelease/merge%sReleaseAssets/out", flavorNoSlash, flavorNoSlash)
+    addToOutDirList(assetsOutDirList, outAssetsDir)
+
+    outAssetsDir = String.format("intermediates/assets/%srelease/merge%sReleaseAssets", flavorNoSlash, flavorNoSlash)
+    addToOutDirList(assetsOutDirList, outAssetsDir)
+
+    outAssetsDir = String.format("intermediates/merged_assets/%srelease/out", flavorNoSlash, flavorNoSlash)
+    addToOutDirList(assetsOutDirList, outAssetsDir)
+
+    return assetsOutDirList
 }
 
 /**
@@ -332,31 +336,29 @@ def adFileGenerateByUser(flavorName) {
 
 /**
  * 获取广告配置文件名称
- * @param assetsDir
+ * @param assetsDirList
  * @param appId
  * @return
  */
-def getAdConfigFile(assetsDir, appId) {
+def getAdConfigFile(List<File> assetsDirList, appId) {
     def pkgnameMd5 = Aes.string2MD5(appId)
-    def adConfigName = "mob" + pkgnameMd5.substring(0, 8)
-    def adDefaultName = "app_mob_data"
-    def adConfigFile1 = new File(assetsDir, adConfigName + getSuffix())
-    def adDefaultFile1 = new File(assetsDir, adDefaultName + getSuffix())
-    if (adConfigFile1.exists()) {
-        return adConfigFile1.getAbsolutePath()
+    def adConfigNameList = ["mob" + pkgnameMd5.substring(0, 8), "app_mob_data"]
+    def adSuffixNameList = [getSuffix(), getSuffixJson()]
+    def adConfigFileList = []
+    def adConfigFilePath = null
+    if (assetsDirList != null && !assetsDirList.isEmpty()) {
+        assetsDirList.forEach {assetDir ->
+            adConfigNameList.forEach {adName ->
+                adSuffixNameList.forEach {suffix ->
+                    adConfigFilePath = new File(assetDir, adName + suffix)
+                    if (adConfigFilePath.exists()) {
+                        adConfigFileList.add(adConfigFilePath.getAbsolutePath())
+                    }
+                }
+            }
+        }
     }
-    if (adDefaultFile1.exists()) {
-        return adDefaultFile1.getAbsolutePath()
-    }
-    def adConfigFile2 = new File(assetsDir, adConfigName + getSuffixJson())
-    def adDefaultFile2 = new File(assetsDir, adDefaultName + getSuffixJson())
-    if (adConfigFile2.exists()) {
-        return adConfigFile2.getAbsolutePath()
-    }
-    if (adDefaultFile2.exists()) {
-        return adDefaultFile2.getAbsolutePath()
-    }
-    return null
+    return adConfigFileList
 }
 
 /**
@@ -364,17 +366,26 @@ def getAdConfigFile(assetsDir, appId) {
  * @param assetDir
  * @return
  */
-def getEncryptFileTree(assetDir) {
-    def output = ext != null && ext.has("encryptFiles") ? ext.encryptFiles : null
-    if (output != null) {
-        FileTree mainTree = fileTree(dir: assetDir)
-        output.each {
-            out ->
-                mainTree.include out
+def getEncryptFileTree(List assetDirList) {
+    def encryptFilePathList = null
+    if (assetDirList != null && !assetDirList.isEmpty()) {
+        List output = ext != null && ext.has("encryptFiles") ? ext.encryptFiles : null
+        if (output != null && !output.isEmpty()) {
+            encryptFilePathList = []
+            assetDirList.forEach {assetDir ->
+                FileTree mainTree = fileTree(dir: assetDir)
+                output.each {out ->
+                    mainTree.include out
+                }
+                mainTree.each {
+                    if (it.exists()) {
+                        encryptFilePathList.add(it)
+                    }
+                }
+            }
         }
-        return mainTree
     }
-    return null
+    return encryptFilePathList
 }
 
 /**
@@ -439,44 +450,49 @@ def generateSignMd5(flavor, assetDir) {
  * @return
  */
 def encryptAssetsFiles(flavor) {
+    println ""
     def secret = ext != null && ext.has("secret") ? ext["secret"] : "123456789"
     def appId = getApplicationId(flavor)
-    def assetDir = getAssetsOutDir(flavor)
-    if (assetDir == null) {
-        System.err.println("[ERROR...] Can not find the output Asset Dir");
-        return;
+    def assetDirList = getAssetsOutDir(flavor)
+    if (assetDirList == null || assetDirList.isEmpty()) {
+        System.err.println("> Task :${project.name}:encryptAssetsFile [AssetDir Not Exist]");
+        return
     }
     // def signFile = generateSignMd5(flavor, assetDir)
-    def adFilePath = getAdConfigFile(assetDir, appId)
-    def mainTree = getEncryptFileTree(assetDir)
-    println ":${project.name}:encryptAdFile    [${adFilePath}]"
-    if (adFilePath != null) {
-        if (Aes.isJson(adFilePath)) {
-            try {
-                Aes.encryptFile(adFilePath, secret)
-                println "[VERBOSE...] [" + new File(adFilePath).getName() + "] encrypt successfully"
-            } catch (Exception e) {
-                e.printStackTrace()
-            }
-        } else {
-            println "[VERBOSE...] [" + new File(adFilePath).getName() + "] has encrypted previously"
-        }
-    } else {
-        println "[VERBOSE...] can not find ad file ..."
-    }
-    if (mainTree != null) {
-        mainTree.each { File file ->
-            println ":${project.name}:encryptExtraFile [${file}]"
-            def filePath = file.getAbsolutePath()
-            if (Aes.isJson(filePath)) {
+    def adFileList = getAdConfigFile(assetDirList, appId)
+    if (adFileList != null && !adFileList.isEmpty()) {
+        adFileList.forEach { adFile ->
+            def needEncrypt = Aes.isJson(adFile)
+            println "> Task :${project.name}:encryptAssetsFile [${new File(adFile).getName()}] need encrypt : $needEncrypt"
+            if (needEncrypt) {
                 try {
-                    Aes.encryptFile(filePath, secret)
-                    println "[VERBOSE...] [" + new File(filePath).getName() + "] encrypt successfully"
+                    Aes.encryptFile(adFile, secret)
+                    println "> Task :${project.name}:encryptAssetsFile [" + new File(adFile).getName() + "] encrypt successfully"
                 } catch (Exception e) {
                     e.printStackTrace()
                 }
             } else {
-                println "[VERBOSE...] [" + new File(filePath).getName() + "] has encrypted previously"
+                println "> Task :${project.name}:encryptAssetsFile [" + new File(adFile).getName() + "] has encrypted previously"
+            }
+        }
+    } else {
+        println "> Task :${project.name}:encryptAssetsFile [Ad Config File Not Exist]"
+    }
+    def mainTree = getEncryptFileTree(assetDirList)
+    if (mainTree != null && !mainTree.isEmpty()) {
+        mainTree.each { file ->
+            def filePath = file.getAbsolutePath()
+            def needEncrypt = Aes.isJson(filePath)
+            println "> Task :${project.name}:encryptAssetsFile [${file.getName()}] need encrypt : $needEncrypt"
+            if (needEncrypt) {
+                try {
+                    Aes.encryptFile(filePath, secret)
+                    println "> Task :app:encryptAssetsFile [" + new File(filePath).getName() + "] encrypt successfully"
+                } catch (Exception e) {
+                    e.printStackTrace()
+                }
+            } else {
+                println "> Task :${project.name}:encryptAssetsFile [" + new File(filePath).getName() + "] has encrypted previously"
             }
         }
     }
