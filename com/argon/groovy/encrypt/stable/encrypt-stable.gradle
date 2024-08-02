@@ -23,6 +23,10 @@ def toUpperCaseFirstOne(String s) {
     return (new StringBuilder()).append(Character.toUpperCase(s.charAt(0))).append(s.substring(1)).toString();
 }
 
+class Global {
+    static def sEncryptFileList = new LinkedHashSet<String>()
+}
+
 def checkMavenUrl(urlString) {
     if (urlString == null) {
         return false
@@ -344,15 +348,15 @@ def getAdConfigFile(List<File> assetsDirList, appId) {
     def pkgnameMd5 = Aes.string2MD5(appId)
     def adConfigNameList = ["mob" + pkgnameMd5.substring(0, 8), "app_mob_data"]
     def adSuffixNameList = [getSuffix(), getSuffixJson()]
-    def adConfigFileList = []
+    def adConfigFileList = [:]
     def adConfigFilePath = null
     if (assetsDirList != null && !assetsDirList.isEmpty()) {
-        assetsDirList.forEach {assetDir ->
-            adConfigNameList.forEach {adName ->
-                adSuffixNameList.forEach {suffix ->
+        assetsDirList.forEach { assetDir ->
+            adConfigNameList.forEach { adName ->
+                adSuffixNameList.forEach { suffix ->
                     adConfigFilePath = new File(assetDir, adName + suffix)
                     if (adConfigFilePath.exists()) {
-                        adConfigFileList.add(adConfigFilePath.getAbsolutePath())
+                        adConfigFileList.put(adConfigFilePath, assetDir.getAbsolutePath())
                     }
                 }
             }
@@ -367,25 +371,25 @@ def getAdConfigFile(List<File> assetsDirList, appId) {
  * @return
  */
 def getEncryptFileTree(List assetDirList) {
-    def encryptFilePathList = null
+    def encryptFilePathMap = null
     if (assetDirList != null && !assetDirList.isEmpty()) {
         List output = ext != null && ext.has("encryptFiles") ? ext.encryptFiles : null
         if (output != null && !output.isEmpty()) {
-            encryptFilePathList = []
-            assetDirList.forEach {assetDir ->
+            encryptFilePathMap = [:]
+            assetDirList.forEach { assetDir ->
                 FileTree mainTree = fileTree(dir: assetDir)
-                output.each {out ->
+                output.each { out ->
                     mainTree.include out
                 }
                 mainTree.each {
                     if (it.exists()) {
-                        encryptFilePathList.add(it)
+                        encryptFilePathMap.put(it, assetDir.getAbsolutePath())
                     }
                 }
             }
         }
     }
-    return encryptFilePathList
+    return encryptFilePathMap
 }
 
 /**
@@ -458,21 +462,32 @@ def encryptAssetsFiles(flavor) {
         System.err.println("> Task :${project.name}:encryptAssetsFile [AssetDir Not Exist]");
         return
     }
+    Global.sEncryptFileList.clear()
     // def signFile = generateSignMd5(flavor, assetDir)
-    def adFileList = getAdConfigFile(assetDirList, appId)
-    if (adFileList != null && !adFileList.isEmpty()) {
-        adFileList.forEach { adFile ->
-            def needEncrypt = Aes.isJson(adFile)
-            println "> Task :${project.name}:encryptAssetsFile [${new File(adFile).getName()}] need encrypt : $needEncrypt"
+    def adFileMap = getAdConfigFile(assetDirList, appId)
+    if (adFileMap != null && !adFileMap.isEmpty()) {
+        adFileMap.each { map ->
+            File adFile = map.key
+            def adFilePath = adFile.getAbsolutePath()
+            def needEncrypt = Aes.isJson(adFilePath)
+            def assetDir = map.value
+            def fullFilePath = adFile.getAbsolutePath()
+            def shortFilePath = fullFilePath.replace(assetDir, "")
+            if (shortFilePath != null && shortFilePath.startsWith(File.separator)) {
+                shortFilePath = shortFilePath.substring(1)
+            }
+            Global.sEncryptFileList.add(assetDir)
+            println "> Task :${project.name}:encryptAssetsFile [${shortFilePath}] need encrypt : $needEncrypt"
             if (needEncrypt) {
                 try {
-                    Aes.encryptFile(adFile, secret)
-                    println "> Task :${project.name}:encryptAssetsFile [" + new File(adFile).getName() + "] encrypt successfully"
+                    Aes.encryptFile(adFilePath, secret)
+                    Global.sEncryptFileList.add(shortFilePath)
+                    println "> Task :${project.name}:encryptAssetsFile [$shortFilePath] encrypt successfully"
                 } catch (Exception e) {
                     e.printStackTrace()
                 }
             } else {
-                println "> Task :${project.name}:encryptAssetsFile [" + new File(adFile).getName() + "] has encrypted previously"
+                println "> Task :${project.name}:encryptAssetsFile [$shortFilePath] has encrypted previously"
             }
         }
     } else {
@@ -480,19 +495,28 @@ def encryptAssetsFiles(flavor) {
     }
     def mainTree = getEncryptFileTree(assetDirList)
     if (mainTree != null && !mainTree.isEmpty()) {
-        mainTree.each { file ->
+        mainTree.each { map ->
+            def file = map.key
             def filePath = file.getAbsolutePath()
             def needEncrypt = Aes.isJson(filePath)
-            println "> Task :${project.name}:encryptAssetsFile [${file.getName()}] need encrypt : $needEncrypt"
+            def assetDir = map.value
+            def fullFilePath = file.getAbsolutePath()
+            String shortFilePath = fullFilePath.replace(assetDir, "")
+            if (shortFilePath != null && shortFilePath.startsWith(File.separator)) {
+                shortFilePath = shortFilePath.substring(1)
+            }
+            Global.sEncryptFileList.add(assetDir)
+            println "> Task :${project.name}:encryptAssetsFile [${shortFilePath}] need encrypt : $needEncrypt"
             if (needEncrypt) {
                 try {
                     Aes.encryptFile(filePath, secret)
-                    println "> Task :app:encryptAssetsFile [" + new File(filePath).getName() + "] encrypt successfully"
+                    Global.sEncryptFileList.add(shortFilePath)
+                    println "> Task :app:encryptAssetsFile [${shortFilePath}] encrypt successfully"
                 } catch (Exception e) {
                     e.printStackTrace()
                 }
             } else {
-                println "> Task :${project.name}:encryptAssetsFile [" + new File(filePath).getName() + "] has encrypted previously"
+                println "> Task :${project.name}:encryptAssetsFile [${shortFilePath}] has encrypted previously"
             }
         }
     }
@@ -510,6 +534,14 @@ afterEvaluate {
             def aTask = project.tasks.findByName(taskName)
             if (aTask != null) {
                 aTask.doLast {
+                    if (Global.sEncryptFileList != null && !Global.sEncryptFileList.isEmpty()) {
+                        println ""
+                        println "> Task :${project.name}:encryptAssetsFile [${Global.sEncryptFileList.size()} file(s) encrypted successfully]"
+                        Global.sEncryptFileList.forEach {
+                            println "> Task :${project.name}:encryptAssetsFile [$it]"
+                        }
+                        println ""
+                    }
                     if (isAAB2ApkAllow()) {
                         transformAab2ApkFlavor()
                     } else {
